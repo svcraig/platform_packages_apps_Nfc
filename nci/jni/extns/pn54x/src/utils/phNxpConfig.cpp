@@ -31,10 +31,12 @@ const char alternative_config_path[] = "";
 #endif
 
 #if 1
-const char transport_config_path[] = "/etc/";
+const char* transport_config_paths[] = {"/odm/etc/", "/vendor/etc/", "/etc/"};
 #else
-const char transport_config_path[] = "res/";
+const char* transport_config_paths[] = {"res/"};
 #endif
+const int transport_config_path_size =
+        (sizeof(transport_config_paths) / sizeof(transport_config_paths[0]));
 
 #define config_name             "libnfc-nxp.conf"
 #define extra_config_base       "libnfc-nxp-"
@@ -155,6 +157,31 @@ inline int getDigitValue (char c, int base)
 
 /*******************************************************************************
 **
+** Function:    findConfigFilePathFromTransportConfigPaths()
+**
+** Description: find a config file path with a given config name from transport
+**              config paths
+**
+** Returns:     none
+**
+*******************************************************************************/
+void findConfigFilePathFromTransportConfigPaths(const string& configName,
+                                                string& filePath) {
+    for (int i = 0; i < transport_config_path_size - 1; i++) {
+        filePath.assign(transport_config_paths[i]);
+        filePath += configName;
+        struct stat file_stat;
+        if (stat(filePath.c_str(), &file_stat) == 0 &&
+            S_ISREG(file_stat.st_mode)) {
+            return;
+        }
+    }
+    filePath.assign(transport_config_paths[transport_config_path_size - 1]);
+    filePath += configName;
+}
+
+/*******************************************************************************
+**
 ** Function:    CNxpNfcConfig::readConfig()
 **
 ** Description: read Config settings and parse them into a linked list
@@ -189,10 +216,10 @@ bool CNxpNfcConfig::readConfig (const char* name, bool bResetContent)
     /* open config file, read it into a buffer */
     if ((fd = fopen (name, "rb")) == NULL)
     {
-        ALOGE ("%s Cannot open config file %s", __func__, name);
+        ALOGE("%s Cannot open config file %s", __func__, name);
         if (bResetContent)
         {
-            ALOGE ("%s Using default value for all settings", __func__);
+            ALOGE("%s Using default value for all settings", __func__);
             mValidFile = false;
         }
         return false;
@@ -444,8 +471,7 @@ CNxpNfcConfig& CNxpNfcConfig::GetInstance ()
                 return theInstance;
             }
         }
-        strPath.assign (transport_config_path);
-        strPath += config_name;
+        findConfigFilePathFromTransportConfigPaths(config_name, strPath);
         theInstance.readConfig (strPath.c_str (), true);
     }
 
@@ -692,7 +718,7 @@ int CNxpNfcConfig::checkTimestamp ()
 
     if (stat(config_timestamp_path, &st) != 0)
     {
-        ALOGD ("%s file %s not exist, creat it.", __func__, config_timestamp_path);
+        ALOGV("%s file %s not exist, creat it.", __func__, config_timestamp_path);
         if ((fd = fopen (config_timestamp_path, "w+")) != NULL)
         {
             fwrite (&m_timeStamp, sizeof(unsigned long), 1, fd);
@@ -705,7 +731,7 @@ int CNxpNfcConfig::checkTimestamp ()
         fd = fopen (config_timestamp_path, "r+");
         if (fd == NULL)
         {
-            ALOGE ("%s Cannot open file %s", __func__, config_timestamp_path);
+            ALOGE("%s Cannot open file %s", __func__, config_timestamp_path);
             return 1;
         }
 
@@ -788,7 +814,7 @@ CNxpNfcParam::CNxpNfcParam (const char* name, unsigned long value) :
 ** Returns:     True if found, otherwise False.
 **
 *******************************************************************************/
-extern "C" int GetNxpStrValue (const char* name, char* pValue, unsigned long len)
+extern int GetNxpStrValue (const char* name, char* pValue, unsigned long len)
 {
     CNxpNfcConfig& rConfig = CNxpNfcConfig::GetInstance ();
 
@@ -811,7 +837,7 @@ extern "C" int GetNxpStrValue (const char* name, char* pValue, unsigned long len
 ** Returns:     TRUE[1] if config param name is found in the config file, else FALSE[0]
 **
 *******************************************************************************/
-extern "C" int GetNxpByteArrayValue (const char* name, char* pValue, long bufflen, long *len)
+extern int GetNxpByteArrayValue (const char* name, char* pValue, long bufflen, long *len)
 {
     CNxpNfcConfig& rConfig = CNxpNfcConfig::GetInstance ();
 
@@ -827,7 +853,7 @@ extern "C" int GetNxpByteArrayValue (const char* name, char* pValue, long buffle
 ** Returns:     true, if successful
 **
 *******************************************************************************/
-extern "C" int GetNxpNumValue (const char* name, void* pValue, unsigned long len)
+extern int GetNxpNumValue (const char* name, void* pValue, unsigned long len)
 {
     if (!pValue)
         return false;
@@ -874,7 +900,7 @@ extern "C" int GetNxpNumValue (const char* name, void* pValue, unsigned long len
 ** Returns:     none
 **
 *******************************************************************************/
-extern "C" void resetNxpConfig ()
+extern void resetNxpConfig ()
 {
     CNxpNfcConfig& rConfig = CNxpNfcConfig::GetInstance ();
 
@@ -893,13 +919,17 @@ extern "C" void resetNxpConfig ()
 void readOptionalConfig (const char* extra)
 {
     string strPath;
-    strPath.assign (transport_config_path);
-    if (alternative_config_path [0] != '\0')
-        strPath.assign (alternative_config_path);
+    string configName(extra_config_base);
+    configName += extra;
+    configName += extra_config_ext;
 
-    strPath += extra_config_base;
-    strPath += extra;
-    strPath += extra_config_ext;
+    if (alternative_config_path [0] != '\0') {
+        strPath.assign (alternative_config_path);
+        strPath += configName;
+    } else {
+        findConfigFilePathFromTransportConfigPaths(configName, strPath);
+    }
+
     CNxpNfcConfig::GetInstance ().readConfig (strPath.c_str (), false);
 }
 
@@ -912,7 +942,7 @@ void readOptionalConfig (const char* extra)
 ** Returns:     0 if not modified, 1 otherwise.
 **
 *******************************************************************************/
-extern "C" int isNxpConfigModified ()
+extern int isNxpConfigModified ()
 {
     CNxpNfcConfig& rConfig = CNxpNfcConfig::GetInstance ();
     return rConfig.checkTimestamp ();

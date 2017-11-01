@@ -16,6 +16,7 @@
 package com.android.nfc.beam;
 
 import com.android.nfc.NfcService;
+import com.android.nfc.R;
 import com.android.nfc.handover.HandoverDataParser;
 
 import android.bluetooth.BluetoothDevice;
@@ -135,6 +136,7 @@ public class BeamManager implements Handler.Callback {
     void whitelistOppDevice(Context context, BluetoothDevice device) {
         if (DBG) Log.d(TAG, "Whitelisting " + device + " for BT OPP");
         Intent intent = new Intent(ACTION_WHITELIST_DEVICE);
+        intent.setPackage(context.getString(R.string.bluetooth_package));
         intent.putExtra(BluetoothDevice.EXTRA_DEVICE, device);
         context.sendBroadcastAsUser(intent, UserHandle.CURRENT);
     }
