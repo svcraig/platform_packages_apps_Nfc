@@ -22,11 +22,9 @@
 #include "NfcJniUtil.h"
 #include "RouteDataSet.h"
 #include <vector>
-extern "C"
-{
-    #include "nfa_api.h"
-    #include "nfa_ee_api.h"
-}
+
+#include "nfa_api.h"
+#include "nfa_ee_api.h"
 
 class RoutingManager
 {
@@ -35,7 +33,7 @@ public:
     bool initialize(nfc_jni_native_data* native);
     void enableRoutingToHost();
     void disableRoutingToHost();
-    bool addAidRouting(const uint8_t* aid, uint8_t aidLen, int route);
+    bool addAidRouting(const uint8_t* aid, uint8_t aidLen, int route, int aidInfo);
     bool removeAidRouting(const uint8_t* aid, uint8_t aidLen);
     bool commitRouting();
     int registerT3tIdentifier(uint8_t* t3tId, uint8_t t3tIdLen);

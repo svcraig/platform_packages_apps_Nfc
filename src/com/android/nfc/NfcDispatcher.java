@@ -26,7 +26,6 @@ import com.android.nfc.handover.PeripheralHandoverService;
 
 import android.app.Activity;
 import android.app.ActivityManager;
-import android.app.ActivityManagerNative;
 import android.app.IActivityManager;
 import android.app.PendingIntent;
 import android.app.PendingIntent.CanceledException;
@@ -88,9 +87,10 @@ class NfcDispatcher {
 
     NfcDispatcher(Context context,
                   HandoverDataParser handoverDataParser,
-                  boolean provisionOnly) {
+                  boolean provisionOnly,
+                  boolean isLiveCaseEnabled) {
         mContext = context;
-        mIActivityManager = ActivityManagerNative.getDefault();
+        mIActivityManager = ActivityManager.getService();
         mTechListFilters = new RegisteredComponentCache(mContext,
                 NfcAdapter.ACTION_TECH_DISCOVERED, NfcAdapter.ACTION_TECH_DISCOVERED);
         mContentResolver = context.getContentResolver();
@@ -115,12 +115,14 @@ class NfcDispatcher {
         mProvisioningMimes = provisionMimes;
 
         String[] liveCaseMimes = null;
-        try {
-            // Get accepted mime-types
-            liveCaseMimes = context.getResources().
-                    getStringArray(R.array.live_case_mime_types);
-        } catch (NotFoundException e) {
-           liveCaseMimes = null;
+        if (isLiveCaseEnabled) {
+            try {
+                // Get accepted mime-types
+                liveCaseMimes = context.getResources().
+                        getStringArray(R.array.live_case_mime_types);
+            } catch (NotFoundException e) {
+               liveCaseMimes = null;
+            }
         }
         mLiveCaseMimes = liveCaseMimes;
     }
@@ -627,6 +629,12 @@ class NfcDispatcher {
         intent.putExtra(PeripheralHandoverService.EXTRA_PERIPHERAL_TRANSPORT, handover.transport);
         if (handover.oobData != null) {
             intent.putExtra(PeripheralHandoverService.EXTRA_PERIPHERAL_OOB_DATA, handover.oobData);
+        }
+        if (handover.uuids != null) {
+            intent.putExtra(PeripheralHandoverService.EXTRA_PERIPHERAL_UUIDS, handover.uuids);
+        }
+        if (handover.btClass != null) {
+            intent.putExtra(PeripheralHandoverService.EXTRA_PERIPHERAL_CLASS, handover.btClass);
         }
         mContext.startServiceAsUser(intent, UserHandle.CURRENT);
 
