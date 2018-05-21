@@ -22,6 +22,7 @@
 #include <nativehelper/ScopedPrimitiveArray.h>
 #include <nativehelper/ScopedUtfChars.h>
 #include <semaphore.h>
+#include "HciEventManager.h"
 #include "JavaClassConstants.h"
 #include "NfcAdaptation.h"
 #include "NfcJniUtil.h"
@@ -43,8 +44,6 @@
 
 using android::base::StringPrintf;
 
-extern const uint8_t nfca_version_string[];
-extern const uint8_t nfa_version_string[];
 extern tNFA_DM_DISC_FREQ_CFG* p_nfa_dm_rf_disc_freq_cfg;  // defined in stack
 namespace android {
 extern bool gIsTagDeactivating;
@@ -55,6 +54,7 @@ extern void nativeNfcTag_notifyRfTimeout();
 extern void nativeNfcTag_doConnectStatus(jboolean is_connect_ok);
 extern void nativeNfcTag_doDeactivateStatus(int status);
 extern void nativeNfcTag_doWriteStatus(jboolean is_write_ok);
+extern jboolean nativeNfcTag_doDisconnect(JNIEnv*, jobject);
 extern void nativeNfcTag_doCheckNdefResult(tNFA_STATUS status,
                                            uint32_t max_size,
                                            uint32_t current_size,
@@ -176,12 +176,12 @@ void initializeGlobalDebugEnabledFlag() {
       (NfcConfig::getUnsigned(NAME_NFC_DEBUG_ENABLED, 1) != 0) ? true : false;
 
   char valueStr[PROPERTY_VALUE_MAX] = {0};
-  int len = property_get("nfc.app_log_level", valueStr, "");
+  int len = property_get("nfc.debug_enabled", valueStr, "");
   if (len > 0) {
-    unsigned trace_level = 1;
+    unsigned debug_enabled = 1;
     // let Android property override .conf variable
-    sscanf(valueStr, "%u", &trace_level);
-    nfc_debug_enabled = (trace_level == 0) ? false : true;
+    sscanf(valueStr, "%u", &debug_enabled);
+    nfc_debug_enabled = (debug_enabled == 0) ? false : true;
   }
 
   DLOG_IF(INFO, nfc_debug_enabled)
@@ -347,8 +347,6 @@ static void nfaConnectionCallback(uint8_t connEvent,
       NfcTag::getInstance().setActive(true);
       if (sIsDisabling || !sIsNfaEnabled) break;
       gActivated = true;
-
-      initializeGlobalDebugEnabledFlag();
 
       NfcTag::getInstance().setActivationState();
       if (gIsSelectingRfInterface) {
@@ -613,6 +611,7 @@ static void nfaConnectionCallback(uint8_t connEvent,
 **
 *******************************************************************************/
 static jboolean nfcManager_initNativeStruc(JNIEnv* e, jobject o) {
+  initializeGlobalDebugEnabledFlag();
   DLOG_IF(INFO, nfc_debug_enabled) << StringPrintf("%s: enter", __func__);
 
   nfc_jni_native_data* nat =
@@ -658,6 +657,9 @@ static jboolean nfcManager_initNativeStruc(JNIEnv* e, jobject o) {
       e->GetMethodID(cls.get(), "notifyRfFieldActivated", "()V");
   gCachedNfcManagerNotifyRfFieldDeactivated =
       e->GetMethodID(cls.get(), "notifyRfFieldDeactivated", "()V");
+
+  gCachedNfcManagerNotifyTransactionListeners = e->GetMethodID(
+      cls.get(), "notifyTransactionListeners", "([B[BLjava/lang/String;)V");
 
   if (nfc_jni_cache_object(e, gNativeNfcTagClassName, &(nat->cached_NfcTag)) ==
       -1) {
@@ -932,6 +934,8 @@ static jint nfcManager_doRegisterT3tIdentifier(JNIEnv* e, jobject,
 
   DLOG_IF(INFO, nfc_debug_enabled)
       << StringPrintf("%s: handle=%d", __func__, handle);
+  if (handle != NFA_HANDLE_INVALID)
+    RoutingManager::getInstance().commitRouting();
   DLOG_IF(INFO, nfc_debug_enabled) << StringPrintf("%s: exit", __func__);
 
   return handle;
@@ -955,6 +959,7 @@ static void nfcManager_doDeregisterT3tIdentifier(JNIEnv*, jobject,
       << StringPrintf("%s: enter; handle=%d", __func__, handle);
 
   RoutingManager::getInstance().deregisterT3tIdentifier(handle);
+  RoutingManager::getInstance().commitRouting();
 
   DLOG_IF(INFO, nfc_debug_enabled) << StringPrintf("%s: exit", __func__);
 }
@@ -990,9 +995,7 @@ static jint nfcManager_getLfT3tMax(JNIEnv*, jobject) {
 **
 *******************************************************************************/
 static jboolean nfcManager_doInitialize(JNIEnv* e, jobject o) {
-  DLOG_IF(INFO, nfc_debug_enabled)
-      << StringPrintf("%s: enter; ver=%s nfa=%s NCI_VERSION=0x%02X", __func__,
-                      nfca_version_string, nfa_version_string, NCI_VERSION);
+  initializeGlobalDebugEnabledFlag();
   tNFA_STATUS stat = NFA_STATUS_OK;
 
   PowerSwitch& powerSwitch = PowerSwitch::getInstance();
@@ -1031,6 +1034,7 @@ static jboolean nfcManager_doInitialize(JNIEnv* e, jobject o) {
         NfcTag::getInstance().initialize(getNative(e, o));
         PeerToPeer::getInstance().initialize();
         PeerToPeer::getInstance().handleNfcOnOff(true);
+        HciEventManager::getInstance().initialize(getNative(e, o));
 
         /////////////////////////////////////////////////////////////////////////////////
         // Add extra configuration here (work-arounds, etc.)
@@ -1108,6 +1112,16 @@ static void nfcManager_doEnableDtaMode(JNIEnv*, jobject) {
 
 static void nfcManager_doDisableDtaMode(JNIEnv*, jobject) {
   gIsDtaEnabled = false;
+}
+
+static void nfcManager_doFactoryReset(JNIEnv*, jobject) {
+  NfcAdaptation& theInstance = NfcAdaptation::GetInstance();
+  theInstance.FactoryReset();
+}
+
+static void nfcManager_doShutdown(JNIEnv*, jobject) {
+  NfcAdaptation& theInstance = NfcAdaptation::GetInstance();
+  theInstance.DeviceShutdown();
 }
 /*******************************************************************************
 **
@@ -1411,6 +1425,7 @@ static jboolean nfcManager_doDeinitialize(JNIEnv*, jobject) {
   pn544InteropAbortNow();
   RoutingManager::getInstance().onNfccShutdown();
   PowerSwitch::getInstance().initialize(PowerSwitch::UNKNOWN_LEVEL);
+  HciEventManager::getInstance().finalize();
 
   if (sIsNfaEnabled) {
     SyncEventGuard guard(sNfaDisableEvent);
@@ -1731,8 +1746,8 @@ static void nfcManager_doSetScreenState(JNIEnv* e, jobject o,
       NCI_LISTEN_DH_NFCEE_ENABLE_MASK | NCI_POLLING_DH_ENABLE_MASK;
 
   DLOG_IF(INFO, nfc_debug_enabled)
-      << StringPrintf("%s: state = %d discovry_param = %d", __FUNCTION__, state,
-                      discovry_param);
+      << StringPrintf("%s: state = %d prevScreenState= %d, discovry_param = %d",
+                      __FUNCTION__, state, prevScreenState, discovry_param);
 
   if (sIsDisabling || !sIsNfaEnabled ||
       (NFC_GetNCIVersion() != NCI_VERSION_2_0))
@@ -1793,6 +1808,13 @@ static void nfcManager_doSetScreenState(JNIEnv* e, jobject o,
       sNfaSetPowerSubState.wait();
     }
   }
+  if ((state == NFA_SCREEN_STATE_OFF_LOCKED ||
+       state == NFA_SCREEN_STATE_OFF_UNLOCKED) &&
+      prevScreenState == NFA_SCREEN_STATE_ON_UNLOCKED) {
+    // screen turns off, disconnect tag if connected
+    nativeNfcTag_doDisconnect(NULL, NULL);
+  }
+
   prevScreenState = state;
 }
 /*******************************************************************************
@@ -1959,6 +1981,8 @@ static JNINativeMethod gMethods[] = {
     {"getNciVersion", "()I", (void*)nfcManager_doGetNciVersion},
     {"doEnableDtaMode", "()V", (void*)nfcManager_doEnableDtaMode},
     {"doDisableDtaMode", "()V", (void*)nfcManager_doDisableDtaMode},
+    {"doFactoryReset", "()V", (void*)nfcManager_doFactoryReset},
+    {"doShutdown", "()V", (void*)nfcManager_doShutdown},
 
     {"getIsoDepMaxTransceiveLength", "()I",
      (void*)nfcManager_getIsoDepMaxTransceiveLength}

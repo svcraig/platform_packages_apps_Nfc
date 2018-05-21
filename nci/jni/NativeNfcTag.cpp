@@ -791,7 +791,7 @@ static jint nativeNfcTag_doHandleReconnect(JNIEnv* e, jobject o,
 ** Returns:         True if ok.
 **
 *******************************************************************************/
-static jboolean nativeNfcTag_doDisconnect(JNIEnv*, jobject) {
+jboolean nativeNfcTag_doDisconnect(JNIEnv*, jobject) {
   DLOG_IF(INFO, nfc_debug_enabled) << StringPrintf("%s: enter", __func__);
   tNFA_STATUS nfaStat = NFA_STATUS_OK;
 
@@ -973,10 +973,9 @@ static jbyteArray nativeNfcTag_doTransceive(JNIEnv* e, jobject o,
         if (EXTNS_CheckMfcResponse(&transData, &transDataLen) ==
             NFCSTATUS_FAILED) {
           nativeNfcTag_doReconnect(e, o);
-        } else {
-          if (transDataLen != 0) {
-            result.reset(e->NewByteArray(transDataLen));
-          }
+        }
+        if (transDataLen != 0) {
+          result.reset(e->NewByteArray(transDataLen));
           if (result.get() != NULL) {
             e->SetByteArrayRegion(result.get(), 0, transDataLen,
                                   (const jbyte*)transData);
