@@ -87,7 +87,6 @@ class NfcDispatcher {
     private final ContentResolver mContentResolver;
     private final HandoverDataParser mHandoverDataParser;
     private final String[] mProvisioningMimes;
-    private final String[] mLiveCaseMimes;
     private final ScreenStateHelper mScreenStateHelper;
     private final NfcUnlockManager mNfcUnlockManager;
     private final boolean mDeviceSupportsBluetooth;
@@ -103,8 +102,7 @@ class NfcDispatcher {
 
     NfcDispatcher(Context context,
                   HandoverDataParser handoverDataParser,
-                  boolean provisionOnly,
-                  boolean isLiveCaseEnabled) {
+                  boolean provisionOnly) {
         mContext = context;
         mIActivityManager = ActivityManager.getService();
         mTechListFilters = new RegisteredComponentCache(mContext,
@@ -129,18 +127,6 @@ class NfcDispatcher {
             }
         }
         mProvisioningMimes = provisionMimes;
-
-        String[] liveCaseMimes = null;
-        if (isLiveCaseEnabled) {
-            try {
-                // Get accepted mime-types
-                liveCaseMimes = context.getResources().
-                        getStringArray(R.array.live_case_mime_types);
-            } catch (NotFoundException e) {
-               liveCaseMimes = null;
-            }
-        }
-        mLiveCaseMimes = liveCaseMimes;
 
         IntentFilter filter = new IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED);
         mContext.registerReceiver(mBluetoothStatusReceiver, filter);
@@ -223,6 +209,11 @@ class NfcDispatcher {
             return intent;
         }
 
+        public boolean hasIntentReceiver() {
+            return packageManager.queryIntentActivitiesAsUser(intent, 0,
+                    ActivityManager.getCurrentUser()).size() > 0;
+        }
+
         public boolean isWebIntent() {
             return ndefUri != null && ndefUri.normalizeScheme().getScheme() != null &&
                 ndefUri.normalizeScheme().getScheme().startsWith("http");
@@ -278,9 +269,9 @@ class NfcDispatcher {
         IntentFilter[] overrideFilters;
         String[][] overrideTechLists;
         String[] provisioningMimes;
-        String[] liveCaseMimes;
-        NdefMessage message = null;
         boolean provisioningOnly;
+        NdefMessage message = null;
+        Ndef ndef = Ndef.get(tag);
 
         synchronized (this) {
             overrideFilters = mOverrideFilters;
@@ -288,28 +279,13 @@ class NfcDispatcher {
             overrideTechLists = mOverrideTechLists;
             provisioningOnly = mProvisioningOnly;
             provisioningMimes = mProvisioningMimes;
-            liveCaseMimes = mLiveCaseMimes;
         }
 
         boolean screenUnlocked = false;
-        boolean liveCaseDetected = false;
-        Ndef ndef = Ndef.get(tag);
         if (!provisioningOnly &&
                 mScreenStateHelper.checkScreenState() == ScreenStateHelper.SCREEN_STATE_ON_LOCKED) {
             screenUnlocked = handleNfcUnlock(tag);
-
-            if (ndef != null) {
-                message = ndef.getCachedNdefMessage();
-                if (message != null) {
-                    String ndefMimeType = message.getRecords()[0].toMimeType();
-                    if (liveCaseMimes != null &&
-                            Arrays.asList(liveCaseMimes).contains(ndefMimeType)) {
-                        liveCaseDetected = true;
-                    }
-                }
-            }
-
-            if (!screenUnlocked && !liveCaseDetected)
+            if (!screenUnlocked)
                 return DISPATCH_FAIL;
         }
 
@@ -575,7 +551,7 @@ class NfcDispatcher {
         // regular launch
         dispatch.intent.setPackage(null);
 
-        if (dispatch.isWebIntent()) {
+        if (dispatch.isWebIntent() && dispatch.hasIntentReceiver()) {
             if (DBG) Log.i(TAG, "matched Web link - prompting user");
             showWebLinkConfirmation(dispatch);
             return true;

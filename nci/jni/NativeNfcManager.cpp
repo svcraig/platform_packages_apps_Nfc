@@ -28,7 +28,6 @@
 #include "NfcJniUtil.h"
 #include "NfcTag.h"
 #include "PeerToPeer.h"
-#include "Pn544Interop.h"
 #include "PowerSwitch.h"
 #include "RoutingManager.h"
 #include "SyncEvent.h"
@@ -354,6 +353,11 @@ static void nfaConnectionCallback(uint8_t connEvent,
       }
 
       nativeNfcTag_resetPresenceCheck();
+      if (!isListenMode(eventData->activated) &&
+          (prevScreenState == NFA_SCREEN_STATE_OFF_LOCKED ||
+           prevScreenState == NFA_SCREEN_STATE_OFF_UNLOCKED)) {
+        NFA_Deactivate(FALSE);
+      }
       if (isPeerToPeer(eventData->activated)) {
         if (sReaderModeEnabled) {
           DLOG_IF(INFO, nfc_debug_enabled) << StringPrintf(
@@ -380,7 +384,7 @@ static void nfaConnectionCallback(uint8_t connEvent,
                                        __func__);
           }
         }
-      } else if (pn544InteropIsBusy() == false) {
+      } else {
         NfcTag::getInstance().connectionEventHandler(connEvent, eventData);
 
         // We know it is not activating for P2P.  If it activated in
@@ -866,10 +870,17 @@ static jboolean nfcManager_sendRawFrame(JNIEnv* e, jobject, jbyteArray data) {
 *******************************************************************************/
 static jboolean nfcManager_routeAid(JNIEnv* e, jobject, jbyteArray aid,
                                     jint route, jint aidInfo) {
-  ScopedByteArrayRO bytes(e, aid);
-  uint8_t* buf =
-      const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(&bytes[0]));
-  size_t bufLen = bytes.size();
+  uint8_t* buf;
+  size_t bufLen;
+
+  if (aid == NULL) {
+    buf = NULL;
+    bufLen = 0;
+  } else {
+    ScopedByteArrayRO bytes(e, aid);
+    buf = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(&bytes[0]));
+    bufLen = bytes.size();
+  }
   return RoutingManager::getInstance().addAidRouting(buf, bufLen, route,
                                                      aidInfo);
 }
@@ -886,10 +897,17 @@ static jboolean nfcManager_routeAid(JNIEnv* e, jobject, jbyteArray aid,
 **
 *******************************************************************************/
 static jboolean nfcManager_unrouteAid(JNIEnv* e, jobject, jbyteArray aid) {
-  ScopedByteArrayRO bytes(e, aid);
-  uint8_t* buf =
-      const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(&bytes[0]));
-  size_t bufLen = bytes.size();
+  uint8_t* buf;
+  size_t bufLen;
+
+  if (aid == NULL) {
+    buf = NULL;
+    bufLen = 0;
+  } else {
+    ScopedByteArrayRO bytes(e, aid);
+    buf = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(&bytes[0]));
+    bufLen = bytes.size();
+  }
   bool result = RoutingManager::getInstance().removeAidRouting(buf, bufLen);
   return result;
 }
@@ -1239,7 +1257,6 @@ void nfcManager_disableDiscovery(JNIEnv* e, jobject o) {
   tNFA_STATUS status = NFA_STATUS_OK;
   DLOG_IF(INFO, nfc_debug_enabled) << StringPrintf("%s: enter;", __func__);
 
-  pn544InteropAbortNow();
   if (sDiscoveryEnabled == false) {
     DLOG_IF(INFO, nfc_debug_enabled)
         << StringPrintf("%s: already disabled", __func__);
@@ -1380,7 +1397,6 @@ static jboolean nfcManager_doDeinitialize(JNIEnv*, jobject) {
 
   sIsDisabling = true;
 
-  pn544InteropAbortNow();
   RoutingManager::getInstance().onNfccShutdown();
   PowerSwitch::getInstance().initialize(PowerSwitch::UNKNOWN_LEVEL);
   HciEventManager::getInstance().finalize();
@@ -1609,12 +1625,12 @@ static void nfcManager_doAbort(JNIEnv* e, jobject, jstring msg) {
 static jboolean nfcManager_doDownload(JNIEnv*, jobject) {
   DLOG_IF(INFO, nfc_debug_enabled) << StringPrintf("%s: enter", __func__);
   NfcAdaptation& theInstance = NfcAdaptation::GetInstance();
-
+  bool result = JNI_FALSE;
   theInstance.Initialize();  // start GKI, NCI task, NFC task
-  theInstance.DownloadFirmware();
+  result = theInstance.DownloadFirmware();
   theInstance.Finalize();
   DLOG_IF(INFO, nfc_debug_enabled) << StringPrintf("%s: exit", __func__);
-  return JNI_TRUE;
+  return result;
 }
 
 /*******************************************************************************
@@ -1716,8 +1732,10 @@ static void nfcManager_doSetScreenState(JNIEnv* e, jobject o,
   }
 
   if (sIsDisabling || !sIsNfaEnabled ||
-      (NFC_GetNCIVersion() != NCI_VERSION_2_0))
+      (NFC_GetNCIVersion() != NCI_VERSION_2_0)) {
+    prevScreenState = state;
     return;
+  }
   if (prevScreenState == NFA_SCREEN_STATE_OFF_LOCKED ||
       prevScreenState == NFA_SCREEN_STATE_OFF_UNLOCKED ||
       prevScreenState == NFA_SCREEN_STATE_ON_LOCKED) {
@@ -1734,9 +1752,9 @@ static void nfcManager_doSetScreenState(JNIEnv* e, jobject o,
 
   if (state == NFA_SCREEN_STATE_OFF_LOCKED ||
       state == NFA_SCREEN_STATE_OFF_UNLOCKED) {
-    // disable both poll and listen on DH 0x02
+    // disable poll and enable listen on DH 0x00
     discovry_param =
-        NCI_POLLING_DH_DISABLE_MASK | NCI_LISTEN_DH_NFCEE_DISABLE_MASK;
+        NCI_POLLING_DH_DISABLE_MASK | NCI_LISTEN_DH_NFCEE_ENABLE_MASK;
   }
 
   if (state == NFA_SCREEN_STATE_ON_LOCKED) {
@@ -1870,6 +1888,19 @@ static jint nfcManager_getIsoDepMaxTransceiveLength(JNIEnv*, jobject) {
   return NfcConfig::getUnsigned(NAME_ISO_DEP_MAX_TRANSCEIVE, 261);
 }
 
+/*******************************************************************************
+ **
+ ** Function:        nfcManager_getAidTableSize
+ ** Description:     Get the maximum supported size for AID routing table.
+ **
+ **                  e: JVM environment.
+ **                  o: Java object.
+ **
+ *******************************************************************************/
+static jint nfcManager_getAidTableSize(JNIEnv*, jobject) {
+  return NFA_GetAidTableSize();
+}
+
 /*****************************************************************************
 **
 ** JNI functions for android-4.0.1_r1
@@ -1952,7 +1983,9 @@ static JNINativeMethod gMethods[] = {
     {"doShutdown", "()V", (void*)nfcManager_doShutdown},
 
     {"getIsoDepMaxTransceiveLength", "()I",
-     (void*)nfcManager_getIsoDepMaxTransceiveLength}
+     (void*)nfcManager_getIsoDepMaxTransceiveLength},
+
+    {"getAidTableSize", "()I", (void*)nfcManager_getAidTableSize},
 
 };
 
