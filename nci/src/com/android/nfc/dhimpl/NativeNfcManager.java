@@ -70,8 +70,8 @@ public class NativeNfcManager implements DeviceHost {
     public native int doGetLastError();
 
     @Override
-    public void checkFirmware() {
-        doDownload();
+    public boolean checkFirmware() {
+        return doDownload();
     }
 
     private native boolean doInitialize();
@@ -330,6 +330,8 @@ public class NativeNfcManager implements DeviceHost {
         }
 
     }
+
+    public native int getAidTableSize();
 
     private native void doSetP2pInitiatorModes(int modes);
     @Override

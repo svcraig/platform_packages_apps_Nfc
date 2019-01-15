@@ -172,7 +172,7 @@ public interface DeviceHost {
      * <p>This is called from a thread
      * that may block for long periods of time during the update process.
      */
-    public void checkFirmware();
+    public boolean checkFirmware();
 
     public boolean initialize();
 
@@ -224,6 +224,8 @@ public interface DeviceHost {
     boolean canMakeReadOnly(int technology);
 
     int getMaxTransceiveLength(int technology);
+
+    public int getAidTableSize();
 
     void setP2pInitiatorModes(int modes);
 
