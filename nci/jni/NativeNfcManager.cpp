@@ -82,6 +82,7 @@ extern void nativeLlcpConnectionlessSocket_receiveData(uint8_t* data,
 bool gActivated = false;
 SyncEvent gDeactivatedEvent;
 SyncEvent sNfaSetPowerSubState;
+bool legacy_mfc_reader = true;
 
 namespace android {
 jmethodID gCachedNfcManagerNotifyNdefMessageListeners;
@@ -186,6 +187,14 @@ void initializeGlobalDebugEnabledFlag() {
 
   DLOG_IF(INFO, nfc_debug_enabled)
       << StringPrintf("%s: level=%u", __func__, nfc_debug_enabled);
+}
+void initializeMfcReaderOption() {
+  legacy_mfc_reader =
+      (NfcConfig::getUnsigned(NAME_LEGACY_MIFARE_READER, 1) != 0) ? true : false;
+
+  DLOG_IF(INFO, nfc_debug_enabled)
+      << __func__ <<": mifare reader option=" << legacy_mfc_reader;
+
 }
 }  // namespace
 
@@ -617,6 +626,7 @@ static void nfaConnectionCallback(uint8_t connEvent,
 *******************************************************************************/
 static jboolean nfcManager_initNativeStruc(JNIEnv* e, jobject o) {
   initializeGlobalDebugEnabledFlag();
+  initializeMfcReaderOption();
   DLOG_IF(INFO, nfc_debug_enabled) << StringPrintf("%s: enter", __func__);
 
   nfc_jni_native_data* nat =
@@ -2097,6 +2107,16 @@ void doStartupConfig() {
     nfa_dm_disc_freq_cfg.paa = polling_frequency[6];
     nfa_dm_disc_freq_cfg.pfa = polling_frequency[7];
     p_nfa_dm_rf_disc_freq_cfg = &nfa_dm_disc_freq_cfg;
+  }
+
+  // configure NFCC_CONFIG_CONTROL- NFCC allowed to manage RF configuration.
+  if (NFC_GetNCIVersion() != NCI_VERSION_1_0) {
+    uint8_t nfa_set_config[] = {0x01};
+    tNFA_STATUS status = NFA_SetConfig(NCI_PARAM_ID_NFCC_CONFIG_CONTROL,
+        sizeof(nfa_set_config), &nfa_set_config[0]);
+    if (status != NFA_STATUS_OK) {
+      LOG(ERROR) << __func__ << ": Failed to configure NFCC_CONFIG_CONTROL";
+    }
   }
 }
 
