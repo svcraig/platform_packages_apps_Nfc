@@ -1179,7 +1179,11 @@ static NFCSTATUS phNciNfc_RecvMfResp(phNciNfc_Buff_t* RspBuffInfo,
             }
             gAuthCmdBuf.auth_status = true;
             status = NFCSTATUS_SUCCESS;
-
+            if ((PHNCINFC_EXTNID_SIZE + PHNCINFC_EXTNSTATUS_SIZE) >
+                RspBuffInfo->wLen) {
+              android_errorWriteLog(0x534e4554, "126204073");
+              return NFCSTATUS_FAILED;
+            }
             /* DataLen = TotalRecvdLen - (sizeof(RspId) + sizeof(Status)) */
             wPldDataSize = ((RspBuffInfo->wLen) -
                             (PHNCINFC_EXTNID_SIZE + PHNCINFC_EXTNSTATUS_SIZE));
@@ -1520,6 +1524,12 @@ static void phLibNfc_CalSectorAddress(uint8_t* Sector_Address) {
 static NFCSTATUS phLibNfc_GetKeyNumberMFC(uint8_t* buffer, uint8_t* bKey) {
   int32_t sdwStat = 0X00;
   NFCSTATUS wStatus = NFCSTATUS_INVALID_PARAMETER;
+
+  /*Key Configuration
+    uint8_t NdefKey[PHLIBNFC_MFC_AUTHKEYLEN] = {0xD3,0XF7,0xD3,0XF7,0xD3,0XF7};
+    uint8_t RawKey[PHLIBNFC_MFC_AUTHKEYLEN] = {0xFF,0XFF,0xFF,0XFF,0xFF,0XFF};
+    uint8_t MadKey[PHLIBNFC_MFC_AUTHKEYLEN] = {0xA0,0XA1,0xA2,0XA3,0xA4,0XA5};
+    uint8_t Key[PHLIBNFC_MFC_AUTHKEYLEN] = {0x00,0x00,0x00,0x00,0x00,0x00}; */ /*Key used during ndef format*/
 
   uint8_t bIndex = 0x00;
   uint8_t bNoOfKeys = 0x00;
