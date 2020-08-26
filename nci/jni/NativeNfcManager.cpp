@@ -18,6 +18,7 @@
 #include <base/logging.h>
 #include <cutils/properties.h>
 #include <errno.h>
+#include <nativehelper/JNIPlatformHelp.h>
 #include <nativehelper/ScopedLocalRef.h>
 #include <nativehelper/ScopedPrimitiveArray.h>
 #include <nativehelper/ScopedUtfChars.h>
@@ -233,12 +234,19 @@ static void handleRfDiscoveryEvent(tNFC_RESULT_DEVT* discoveredDevice) {
     // there is more discovery notification coming
     return;
   }
-  if (natTag.getNumDiscNtf() > 1) {
-    natTag.setMultiProtocolTagSupport(true);
-  }
 
   bool isP2p = natTag.isP2pDiscovered();
-  if (!sReaderModeEnabled && isP2p) {
+
+  if (natTag.getNumDiscNtf() > 1) {
+    natTag.setMultiProtocolTagSupport(true);
+    if (isP2p) {
+      // Remove NFC_DEP NTF count
+      // Skip NFC_DEP protocol in MultiProtocolTag select.
+      natTag.setNumDiscNtf(natTag.getNumDiscNtf() - 1);
+    }
+  }
+
+  if (sP2pEnabled && !sReaderModeEnabled && isP2p) {
     // select the peer that supports P2P
     natTag.selectP2p();
   } else {
@@ -1983,6 +1991,11 @@ static jboolean nfcManager_doSetNfcSecure(JNIEnv* e, jobject o,
   }
   return true;
 }
+
+static jstring nfcManager_doGetNfaStorageDir(JNIEnv* e, jobject o) {
+  string nfaStorageDir = NfcConfig::getString(NAME_NFA_STORAGE, "/data/nfc");
+  return e->NewStringUTF(nfaStorageDir.c_str());
+}
 /*****************************************************************************
 **
 ** JNI functions for android-4.0.1_r1
@@ -2070,6 +2083,9 @@ static JNINativeMethod gMethods[] = {
     {"getAidTableSize", "()I", (void*)nfcManager_getAidTableSize},
 
     {"doSetNfcSecure", "(Z)Z", (void*)nfcManager_doSetNfcSecure},
+
+    {"getNfaStorageDir", "()Ljava/lang/String;",
+     (void*)nfcManager_doGetNfaStorageDir},
 };
 
 /*******************************************************************************

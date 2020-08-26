@@ -139,7 +139,8 @@ public class NfcService implements DeviceHostListener {
     static final String TRON_NFC_P2P = "nfc_p2p";
     static final String TRON_NFC_TAG = "nfc_tag";
 
-    static final String NATIVE_LOG_FILE_NAME = "native_logs";
+    static final String NATIVE_LOG_FILE_NAME = "native_crash_logs";
+    static final int NATIVE_CRASH_FILE_SIZE = 1024 * 1024;
 
     static final int MSG_NDEF_TAG = 0;
     static final int MSG_LLCP_LINK_ACTIVATION = 1;
@@ -306,6 +307,7 @@ public class NfcService implements DeviceHostListener {
 
     int mPollDelay;
     boolean mNotifyDispatchFailed;
+    boolean mNotifyReadFailed;
 
     private NfcDispatcher mNfcDispatcher;
     private PowerManager mPowerManager;
@@ -549,6 +551,7 @@ public class NfcService implements DeviceHostListener {
         // Polling delay variables
         mPollDelay = mContext.getResources().getInteger(R.integer.unknown_tag_polling_delay);
         mNotifyDispatchFailed = mContext.getResources().getBoolean(R.bool.enable_notify_dispatch_failed);
+        mNotifyReadFailed = mContext.getResources().getBoolean(R.bool.enable_notify_read_failed);
 
         // Make sure this is only called when object construction is complete.
         ServiceManager.addService(SERVICE_NAME, mNfcAdapter);
@@ -2202,10 +2205,6 @@ public class NfcService implements DeviceHostListener {
 
                 case MSG_NDEF_TAG:
                     if (DBG) Log.d(TAG, "Tag detected, notifying applications");
-                    if (mScreenState == ScreenStateHelper.SCREEN_STATE_ON_UNLOCKED) {
-                        mPowerManager.userActivity(SystemClock.uptimeMillis(),
-                                PowerManager.USER_ACTIVITY_EVENT_OTHER, 0);
-                    }
                     mNumTagsDetected.incrementAndGet();
                     TagEndpoint tag = (TagEndpoint) msg.obj;
                     byte[] debounceTagUid;
@@ -2255,7 +2254,7 @@ public class NfcService implements DeviceHostListener {
                         if (!tag.reconnect()) {
                             tag.disconnect();
                             if (mScreenState == ScreenStateHelper.SCREEN_STATE_ON_UNLOCKED) {
-                                if (!sToast_debounce) {
+                                if (!sToast_debounce && mNotifyReadFailed) {
                                     Toast.makeText(mContext, R.string.tag_read_error,
                                                    Toast.LENGTH_SHORT).show();
                                     sToast_debounce = true;
@@ -2709,6 +2708,10 @@ public class NfcService implements DeviceHostListener {
                             playSound(SOUND_END);
                         }
                         if (readerParams.callback != null) {
+                            if (mScreenState == ScreenStateHelper.SCREEN_STATE_ON_UNLOCKED) {
+                                mPowerManager.userActivity(SystemClock.uptimeMillis(),
+                                        PowerManager.USER_ACTIVITY_EVENT_OTHER, 0);
+                            }
                             readerParams.callback.onTagDiscovered(tag);
                             return;
                         } else {
@@ -2756,6 +2759,10 @@ public class NfcService implements DeviceHostListener {
                         if (DBG) Log.d(TAG, "Tag dispatch failed notification");
                     }
                 } else if (dispatchResult == NfcDispatcher.DISPATCH_SUCCESS) {
+                    if (mScreenState == ScreenStateHelper.SCREEN_STATE_ON_UNLOCKED) {
+                        mPowerManager.userActivity(SystemClock.uptimeMillis(),
+                                PowerManager.USER_ACTIVITY_EVENT_OTHER, 0);
+                    }
                     mDispatchFailedCount = 0;
                     mVibrator.vibrate(mVibrationEffect);
                     playSound(SOUND_END);
@@ -2917,9 +2924,13 @@ public class NfcService implements DeviceHostListener {
         }
     }
 
+    public String getNfaStorageDir() {
+        return mDeviceHost.getNfaStorageDir();
+    }
+
     private void copyNativeCrashLogsIfAny(PrintWriter pw) {
       try {
-          File file = new File(mContext.getFilesDir(), NATIVE_LOG_FILE_NAME);
+          File file = new File(getNfaStorageDir(), NATIVE_LOG_FILE_NAME);
           if (!file.exists()) {
             return;
           }
@@ -2938,12 +2949,12 @@ public class NfcService implements DeviceHostListener {
 
     private void storeNativeCrashLogs() {
       try {
-          File file = new File(mContext.getFilesDir(), NATIVE_LOG_FILE_NAME);
-          if (!file.exists()) {
+          File file = new File(getNfaStorageDir(), NATIVE_LOG_FILE_NAME);
+          if (file.length() >= NATIVE_CRASH_FILE_SIZE) {
               file.createNewFile();
           }
 
-          FileOutputStream fos = new FileOutputStream(file);
+          FileOutputStream fos = new FileOutputStream(file, true);
           mDeviceHost.dump(fos.getFD());
           fos.flush();
           fos.close();
